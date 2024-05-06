@@ -56,6 +56,7 @@ const (
 
 // this matches friendly device names (on Windows), e.g. "Headphones (Realtek Audio)"
 var deviceSessionKeyPattern = regexp.MustCompile(`^.+ \(.+\)$`)
+var lastSliderEvent SliderMoveEvent = SliderMoveEvent{}
 
 func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder SessionFinder) (*sessionMap, error) {
 	logger = logger.Named("sessions")
@@ -81,6 +82,7 @@ func (m *sessionMap) initialize() error {
 
 	m.setupOnConfigReload()
 	m.setupOnSliderMove()
+	m.setupOnSessionChange()
 
 	return nil
 }
@@ -143,7 +145,22 @@ func (m *sessionMap) setupOnSliderMove() {
 		for {
 			select {
 			case event := <-sliderEventsChannel:
+				lastSliderEvent = event
 				m.handleSliderMoveEvent(event)
+			}
+		}
+	}()
+}
+
+func (m *sessionMap) setupOnSessionChange() {
+	sessionChangeChannel := m.sessionFinder.SubscribeToSessionChanges()
+
+	go func() {
+		for {
+			select {
+			case  <-sessionChangeChannel:
+				m.refreshSessions(true)
+				m.deej.serial.TriggerSync(m.logger)
 			}
 		}
 	}()
@@ -221,6 +238,7 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 	if !ok {
 		return
 	}
+    m.logger.Debug("Targets for slider are ", targets)
 
 	targetFound := false
 	adjustmentFailed := false

@@ -5,4 +5,6 @@ type SessionFinder interface {
 	GetAllSessions() ([]Session, error)
 
 	Release() error
+
+	SubscribeToSessionChanges() chan int
 }

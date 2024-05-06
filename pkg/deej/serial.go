@@ -248,6 +248,27 @@ func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) c
 	return ch
 }
 
+func (sio *SerialIO) TriggerSync(logger *zap.SugaredLogger) {
+	logger.Debug("Triggering volume sync")
+
+	moveEvents := []SliderMoveEvent{}
+	for sliderIdx, percentVal := range sio.currentSliderPercentValues {
+		moveEvents = append(moveEvents, SliderMoveEvent{
+			SliderID:     sliderIdx,
+			PercentValue: percentVal,
+		})
+	}
+
+	// deliver move events if there are any, towards all potential consumers
+	if len(moveEvents) > 0 {
+		for _, consumer := range sio.sliderMoveConsumers {
+			for _, moveEvent := range moveEvents {
+				consumer <- moveEvent
+			}
+		}
+	}
+}
+
 func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 
 	// this function receives an unsanitized line which is guaranteed to end with LF,

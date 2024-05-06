@@ -9,8 +9,9 @@ import (
 )
 
 type paSessionFinder struct {
-	logger        *zap.SugaredLogger
-	sessionLogger *zap.SugaredLogger
+	logger                 *zap.SugaredLogger
+	sessionLogger          *zap.SugaredLogger
+	sessionChangeConsumers []chan int
 
 	client *proto.Client
 	conn   net.Conn
@@ -34,6 +35,11 @@ func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
 		return nil, err
 	}
 
+	err = client.Request(&proto.Subscribe{Mask: proto.SubscriptionMaskAll}, nil)
+	if err != nil {
+		panic(err)
+	}
+
 	sf := &paSessionFinder{
 		logger:        logger.Named("session_finder"),
 		sessionLogger: logger.Named("sessions"),
@@ -41,9 +47,33 @@ func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
 		conn:          conn,
 	}
 
+	client.Callback = func(val interface{}) {
+		switch val := val.(type) {
+		case *proto.SubscribeEvent:
+			if val.Event.String() == "new sink input" || val.Event.String() == "remove sink input" {
+				for _, ch := range sf.sessionChangeConsumers {
+					logger.Debugf("New event, %d", val.Event.String())
+					ch <- 1
+				}
+			}
+			//logger.Debugf("%s index=%d", val.Event, val.Index)
+			//if val.Event.GetType() == proto.EventNew && val.Event.GetFacility() == proto.EventSink {
+			//}
+		}
+	}
+
 	sf.logger.Debug("Created PA session finder instance")
 
 	return sf, nil
+}
+
+// SubscribeToSessionChanges returns an unbuffered channel that receives
+// int 1 every time a session is added or removed
+func (sf *paSessionFinder) SubscribeToSessionChanges() chan int {
+	ch := make(chan int)
+	sf.sessionChangeConsumers = append(sf.sessionChangeConsumers, ch)
+
+	return ch
 }
 
 func (sf *paSessionFinder) GetAllSessions() ([]Session, error) {
@@ -130,6 +160,8 @@ func (sf *paSessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 
 	for _, info := range reply {
 		name, ok := info.Properties["application.process.binary"]
+
+		sf.logger.Infow("Detected session", "name", name, "sinkInputIndex", info.SinkInputIndex)
 
 		if !ok {
 			sf.logger.Warnw("Failed to get sink input's process name",
