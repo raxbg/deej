@@ -161,6 +161,24 @@ func (sf *paSessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 	for _, info := range reply {
 		name, ok := info.Properties["application.process.binary"]
 
+		if !ok {
+			name, ok = info.Properties["application.name"]
+		}
+
+		// For apps that connect via the native PipeWire protocol (e.g. Spotify), neither
+		// application property is present on the sink-input itself — they live on the
+		// associated PulseAudio client object instead.
+		if !ok {
+			clientReq := proto.GetClientInfo{ClientIndex: info.ClientIndex}
+			clientReply := proto.GetClientInfoReply{}
+			if err := sf.client.Request(&clientReq, &clientReply); err == nil {
+				name, ok = clientReply.Properties["application.process.binary"]
+				if !ok {
+					name, ok = clientReply.Properties["application.name"]
+				}
+			}
+		}
+
 		sf.logger.Infow("Detected session", "name", name, "sinkInputIndex", info.SinkInputIndex)
 
 		if !ok {
